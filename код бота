@@ -1,0 +1,273 @@
+import asyncio
+import logging
+import aiohttp
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.utils.keyboard import ReplyKeyboardBuilder
+import os
+from openai import OpenAI
+
+# Конфигурация
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+# API endpoints
+MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
+
+# Загрузка конфигурации
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "o4HcmjBOPlElwwGO3r3OlhsRY4gCDfrt")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-aitunnel-Bm73SZY1JAzXh4e5rzlhcY6cmvqb2UV0")
+LLAMA_API_KEY = os.getenv("LLAMA_API_KEY", "sk-aitunnel-Bm73SZY1JAzXh4e5rzlhcY6cmvqb2UV0")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "sk-aitunnel-Bm73SZY1JAzXh4e5rzlhcY6cmvqb2UV0")
+IMAGE_API_KEY = os.getenv("IMAGE_API_KEY", "sk-aitunnel-Bm73SZY1JAzXh4e5rzlhcY6cmvqb2UV")
+
+# Инициализация бота
+BOT_TOKEN = "7707968884:AAFhHJ9WA9NwOZ1Bdy5zTuj0riXxuDq9_g0"
+
+# Инициализация бота
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
+# Хранилище состояний
+user_states = {}
+
+# Инициализация клиентов для DeepSeek, Llama, Gemini и генерации изображений
+deepseek_client = OpenAI(
+    api_key=DEEPSEEK_API_KEY,
+    base_url="https://api.aitunnel.ru/v1/",
+)
+
+llama_client = OpenAI(
+    api_key=LLAMA_API_KEY,
+    base_url="https://api.aitunnel.ru/v1/",
+)
+
+gemini_client = OpenAI(
+    api_key=GEMINI_API_KEY,
+    base_url="https://api.aitunnel.ru/v1/",
+)
+
+image_client = OpenAI(
+    api_key=IMAGE_API_KEY,
+    base_url="https://api.aitunnel.ru/v1/",
+)
+
+def get_model_keyboard():
+    builder = ReplyKeyboardBuilder()
+    builder.add(types.KeyboardButton(text="🦅 Mistral"))
+    builder.add(types.KeyboardButton(text="🧠 DeepSeek"))
+    builder.add(types.KeyboardButton(text="🦙 Llama"))
+    builder.add(types.KeyboardButton(text="🌟 Gemini"))
+    builder.add(types.KeyboardButton(text="🖼️ Generate Image"))
+    builder.adjust(2)
+    return builder.as_markup(resize_keyboard=True)
+
+async def call_mistral_api(prompt: str) -> str:
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "mistral-small-latest",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.7,
+        "max_tokens": 2000
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                    MISTRAL_API_URL,
+                    headers=headers,
+                    json=payload,
+                    timeout=30
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                return data['choices'][0]['message']['content']
+    except Exception as e:
+        logger.error(f"Mistral API error: {str(e)}")
+        return "⚠️ Ошибка при запросе к Mistral API"
+
+async def call_deepseek_api(prompt: str) -> str:
+    try:
+        chat_result = deepseek_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="deepseek-chat",
+            max_tokens=2000,
+        )
+        return chat_result.choices[0].message.content
+    except Exception as e:
+        logger.error(f"DeepSeek API error: {str(e)}")
+        return "⚠️ Ошибка при запросе к DeepSeek API"
+
+async def call_llama_api(prompt: str) -> str:
+    try:
+        chat_result = llama_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.2",
+            max_tokens=2000,
+        )
+        return chat_result.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Llama API error: {str(e)}")
+        return "⚠️ Ошибка при запросе к Llama API"
+
+async def call_gemini_api(prompt: str) -> str:
+    try:
+        chat_result = gemini_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="gemini-flash-1.5-8b",
+            max_tokens=2000,
+        )
+        return chat_result.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Gemini API error: {str(e)}")
+        return "⚠️ Ошибка при запросе к Gemini API"
+
+async def generate_image(prompt: str, size: str = "1024x1024") -> str:
+    try:
+        image_res = image_client.images.generate(
+            model="dall-e-2",
+            size=size,
+            quality="standard",
+            prompt=prompt
+        )
+        return image_res.data[0].url
+    except Exception as e:
+        logger.error(f"Image generation error: {str(e)}")
+        return "⚠️ Ошибка при генерации изображения"
+
+@dp.message(Command("start", "help"))
+async def cmd_start(message: types.Message):
+    user_id = message.from_user.id
+    user_states[user_id] = "mistral"
+
+    await message.answer(
+        "👋 Привет! Я бот с поддержкой четырех AI-моделей и генерации изображений:\n\n"
+        "🦅 <b>Mistral</b> - мощная модель с расширенными возможностями\n"
+        "🧠 <b>DeepSeek v3</b> - быстрая и бесплатная модель\n"
+        "🦙 <b>Llama 3.2</b> - модель с поддержкой изображений\n"
+        "🌟 <b>Gemini 1.5</b> - новая модель с улучшенной производительностью\n"
+        "🖼️ <b>Generate Image</b> - генерация изображений\n\n"
+        "Выбери модель или функцию:",
+        reply_markup=get_model_keyboard(),
+        parse_mode=ParseMode.HTML
+    )
+
+@dp.message(F.text == "🦅 Mistral")
+async def select_mistral(message: types.Message):
+    user_id = message.from_user.id
+    user_states[user_id] = "mistral"
+    await message.answer(
+        "✅ Выбрана модель: <b>Mistral</b>",
+        reply_markup=get_model_keyboard(),
+        parse_mode=ParseMode.HTML
+    )
+
+@dp.message(F.text == "🧠 DeepSeek")
+async def select_deepseek(message: types.Message):
+    user_id = message.from_user.id
+    user_states[user_id] = "deepseek"
+    await message.answer(
+        "✅ Выбрана модель: <b>DeepSeek</b>",
+        reply_markup=get_model_keyboard(),
+        parse_mode=ParseMode.HTML
+    )
+
+@dp.message(F.text == "🦙 Llama")
+async def select_llama(message: types.Message):
+    user_id = message.from_user.id
+    user_states[user_id] = "llama"
+    await message.answer(
+        "✅ Выбрана модель: <b>Llama</b>",
+        reply_markup=get_model_keyboard(),
+        parse_mode=ParseMode.HTML
+    )
+
+@dp.message(F.text == "🌟 Gemini")
+async def select_gemini(message: types.Message):
+    user_id = message.from_user.id
+    user_states[user_id] = "gemini"
+    await message.answer(
+        "✅ Выбрана модель: <b>Gemini</b>",
+        reply_markup=get_model_keyboard(),
+        parse_mode=ParseMode.HTML
+    )
+
+@dp.message(F.text == "🖼️ Generate Image")
+async def select_generate_image(message: types.Message):
+    user_id = message.from_user.id
+    user_states[user_id] = "generate_image"
+    await message.answer(
+        "✅ Выбрана функция: <b>Generate Image</b>\n\n"
+        "Пожалуйста, отправьте описание изображения и выберите размер:\n"
+        "Доступные размеры: 256x256, 512x512, 1024x1024",
+        reply_markup=get_model_keyboard(),
+        parse_mode=ParseMode.HTML
+    )
+
+@dp.message()
+async def handle_message(message: types.Message):
+    if message.text.startswith('/'):
+        return
+
+    user_id = message.from_user.id
+    if user_id not in user_states:
+        user_states[user_id] = "mistral"
+
+    model = user_states[user_id]
+    await bot.send_chat_action(message.chat.id, "typing")
+
+    try:
+        if model == "mistral":
+            response = await call_mistral_api(message.text)
+            prefix = "🦅 <b>Mistral</b>:\n\n"
+        elif model == "llama":
+            response = await call_llama_api(message.text)
+            prefix = "🦙 <b>Llama</b>:\n\n"
+        elif model == "gemini":
+            response = await call_gemini_api(message.text)
+            prefix = "🌟 <b>Gemini</b>:\n\n"
+        elif model == "generate_image":
+            # Предполагается, что пользователь отправит текст в формате "описание размер"
+            parts = message.text.rsplit(' ', 1)
+            if len(parts) != 2 or parts[1] not in ["256x256", "512x512", "1024x1024"]:
+                raise ValueError("Неверный формат запроса или размер изображения")
+            prompt, size = parts
+            response = await generate_image(prompt, size)
+            prefix = "🖼️ <b>Generate Image</b>:\n\n"
+        else:
+            response = await call_deepseek_api(message.text)
+            prefix = "🧠 <b>DeepSeek</b>:\n\n"
+
+        # Разбиваем длинные сообщения на части
+        max_length = 4000
+        for i in range(0, len(response), max_length):
+            part = response[i:i+max_length]
+            await message.answer(
+                prefix + part,
+                parse_mode=ParseMode.HTML
+            )
+
+    except Exception as e:
+        logger.error(f"Error processing message: {str(e)}", exc_info=True)
+        await message.answer(
+            "⚠️ Произошла ошибка при обработке запроса",
+            parse_mode=ParseMode.HTML
+        )
+
+async def main():
+    await bot.delete_webhook(drop_pending_updates=True)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
+
+if __name__ == "__main__":
+    logger.info("Starting bot...")
+    asyncio.run(main())
